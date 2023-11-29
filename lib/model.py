@@ -24,6 +24,17 @@ import torch
 import torch.nn as nn
 import torch.nn.init as init
 
+Activation = nn.LeakyReLU #nn.ReLU #  nn.Sigmoid
+
+def _RNN(opt):
+    if opt.module == 'gru':
+        return nn.GRU
+    elif opt.module == 'lstm':
+        return nn.LSTM
+    elif opt.module == 'rnn':
+        return nn.RNN
+    else:
+        raise ValueError(f'unknonw RNN module "{opt.module}"')
 
 def _weights_init(m):
     classname = m.__class__.__name__
@@ -57,10 +68,11 @@ class Encoder(nn.Module):
         """
     def __init__(self, opt):
         super(Encoder, self).__init__()
-        self.rnn = nn.GRU(input_size=opt.z_dim, hidden_size=opt.hidden_dim, num_layers=opt.num_layer)
+        _rnn = _RNN(opt)
+        self.rnn = _rnn(input_size=opt.z_dim, hidden_size=opt.hidden_dim, num_layers=opt.num_layer, batch_first = True)
        # self.norm = nn.BatchNorm1d(opt.hidden_dim)
         self.fc = nn.Linear(opt.hidden_dim, opt.hidden_dim)
-        self.sigmoid = nn.Sigmoid()
+        self.sigmoid = Activation() #nn.Sigmoid()
         self.apply(_weights_init)
 
     def forward(self, input, sigmoid=True):
@@ -83,11 +95,12 @@ class Recovery(nn.Module):
     """
     def __init__(self, opt):
         super(Recovery, self).__init__()
-        self.rnn = nn.GRU(input_size=opt.hidden_dim, hidden_size=opt.z_dim, num_layers=opt.num_layer)
+        _rnn = _RNN(opt)
+        self.rnn = _rnn(input_size=opt.hidden_dim, hidden_size=opt.z_dim_out, num_layers=opt.num_layer, batch_first = True)
         
       #  self.norm = nn.BatchNorm1d(opt.z_dim)
-        self.fc = nn.Linear(opt.z_dim, opt.z_dim)
-        self.sigmoid = nn.Sigmoid()
+        self.fc = nn.Linear(opt.z_dim_out, opt.z_dim_out)
+        self.sigmoid = Activation() #nn.Sigmoid()
         self.apply(_weights_init)
 
     def forward(self, input, sigmoid=True):
@@ -110,10 +123,11 @@ class Generator(nn.Module):
     """
     def __init__(self, opt):
         super(Generator, self).__init__()
-        self.rnn = nn.GRU(input_size=opt.z_dim, hidden_size=opt.hidden_dim, num_layers=opt.num_layer)
+        _rnn = _RNN(opt)
+        self.rnn = _rnn(input_size=opt.z_dim, hidden_size=opt.hidden_dim, num_layers=opt.num_layer, batch_first = True)
      #   self.norm = nn.LayerNorm(opt.hidden_dim)
         self.fc = nn.Linear(opt.hidden_dim, opt.hidden_dim)
-        self.sigmoid = nn.Sigmoid()
+        self.sigmoid = Activation() #n.Sigmoid()
         self.apply(_weights_init)
 
     def forward(self, input, sigmoid=True):
@@ -137,10 +151,11 @@ class Supervisor(nn.Module):
     """
     def __init__(self, opt):
         super(Supervisor, self).__init__()
-        self.rnn = nn.GRU(input_size=opt.hidden_dim, hidden_size=opt.hidden_dim, num_layers=opt.num_layer)
+        _rnn = _RNN(opt)
+        self.rnn = _rnn(input_size=opt.hidden_dim, hidden_size=opt.hidden_dim, num_layers=opt.num_layer, batch_first = True)
       #  self.norm = nn.LayerNorm(opt.hidden_dim)
         self.fc = nn.Linear(opt.hidden_dim, opt.hidden_dim)
-        self.sigmoid = nn.Sigmoid()
+        self.sigmoid = Activation() #n.Sigmoid()
         self.apply(_weights_init)
 
     def forward(self, input, sigmoid=True):
@@ -164,14 +179,22 @@ class Discriminator(nn.Module):
     """
     def __init__(self, opt):
         super(Discriminator, self).__init__()
-        self.rnn = nn.GRU(input_size=opt.hidden_dim, hidden_size=opt.hidden_dim, num_layers=opt.num_layer)
+        _rnn = _RNN(opt)
+        self.rnn = _rnn(input_size=opt.hidden_dim, hidden_size=opt.hidden_dim, num_layers=opt.num_layer, batch_first = True, dropout = 0.)
       #  self.norm = nn.LayerNorm(opt.hidden_dim)
-        self.fc = nn.Linear(opt.hidden_dim, opt.hidden_dim)
+        fc_out_dim = 1 #opt.hidden_dim # 1 # that's the original impl, but makes sense to set to 1 (binary classification)
+        self.fc = nn.Linear(opt.hidden_dim, fc_out_dim)
         self.sigmoid = nn.Sigmoid()
         self.apply(_weights_init)
 
-    def forward(self, input, sigmoid=True):
+    def forward(self, input, sigmoid = False, use_last_hidden = False): #True):
+        #--- NOTE(2) I set the default value of "sigmoid" to False, since I change the BCE loss to BCEWithLogitsLoss
+        #--- NOTE(1) that if use_last_hidden is set to False, output will be of size [batch X seq_len X 1], and the bce loss will average over the 2nd dim (that's its default)
+        #--- TODO add the option to reduce using a concatenation of max and avg pooling over seq of hidden states, aka "concat pooling" 
+        #--- (see https://medium.com/@sonicboom8/sentiment-analysis-with-variable-length-sequences-in-pytorch-6241635ae130)
         d_outputs, _ = self.rnn(input)
+        if use_last_hidden:
+            d_outputs = d_outputs[:, -1, :]
         Y_hat = self.fc(d_outputs)
         if sigmoid:
             Y_hat = self.sigmoid(Y_hat)

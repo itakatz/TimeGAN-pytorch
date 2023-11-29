@@ -31,9 +31,9 @@ warnings.filterwarnings("ignore")
 import os
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
-from options import Options
-from lib.data import load_data
-from lib.timegan import TimeGAN
+from .options import Options
+from .lib.data import load_data
+from .lib.timegan import TimeGAN
 
 
 def train():
@@ -52,5 +52,7 @@ def train():
     # TRAIN MODEL
     model.train()
 
+    return model
+
 if __name__ == '__main__':
-    train()
+    m = train()

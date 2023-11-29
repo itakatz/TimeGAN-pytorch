@@ -1,4 +1,8 @@
 # TimeGAN-pytorch
+This is my (itakaz) fork of https://github.com/zzw-zwzhang/TimeGAN-pytorch
+- Allow different dim for input and output (not X --> X_tilde autoencoder) 
+- Use Pytorch classes for dataset loading and batching
+- Some fixes (bugs) and minor changes
 
 Pytorch implementation of the paper [Time-series Generative Adversarial Networks](https://papers.nips.cc/paper/2019/file/c9efe5f26cd17ba6216bbe2a7d26d490-Paper.pdf) presented at NeurIPS'19.
 

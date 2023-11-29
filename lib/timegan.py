@@ -21,8 +21,10 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.utils.tensorboard import SummaryWriter
+
 from .data import batch_generator
-from utils import extract_time, random_generator, NormMinMax
+from ..utils import extract_time, random_generator, NormMinMax
 from .model import Encoder, Recovery, Generator, Discriminator, Supervisor
 
 
@@ -42,6 +44,8 @@ class BaseModel():
     self.trn_dir = os.path.join(self.opt.outf, self.opt.name, 'train')
     self.tst_dir = os.path.join(self.opt.outf, self.opt.name, 'test')
     self.device = torch.device("cuda:0" if self.opt.device != 'cpu' else "cpu")
+    self.log_batch = False
+    self.writer = SummaryWriter(os.path.join(self.trn_dir, 'log'))
 
   def seed(self, seed_value):
     """ Seed
@@ -161,22 +165,37 @@ class BaseModel():
     self.optimize_params_d()
 
 
-  def train(self):
+  def train(self, log_batch = False):
     """ Train the model
     """
 
+    running_loss = 0.0
     for iter in range(self.opt.iteration):
       # Train for one iter
       self.train_one_iter_er()
+      running_loss += self.err_er.item()
 
-      print('Encoder training step: '+ str(iter) + '/' + str(self.opt.iteration))
+      if iter > 0 and iter % self.opt.print_freq == 0:
+          self.writer.add_scalar('Loss Embedder/train', running_loss / self.opt.print_freq, iter)
+          self.writer.flush()
+          running_loss = 0.0
+          print('Encoder training step: '+ str(iter) + '/' + str(self.opt.iteration))
 
+    running_loss = 0.0
     for iter in range(self.opt.iteration):
       # Train for one iter
       self.train_one_iter_s()
+      running_loss += self.err_s.item()
 
-      print('Superviser training step: '+ str(iter) + '/' + str(self.opt.iteration))
+      if iter > 0 and iter % self.opt.print_freq == 0:
+          self.writer.add_scalar('Loss Supervised/train', running_loss / self.opt.print_freq, iter)
+          self.writer.flush()
+          running_loss = 0.0
+          print('Superviser training step: '+ str(iter) + '/' + str(self.opt.iteration))
 
+    running_loss_g = 0.0
+    running_loss_er_ = 0.0
+    running_loss_d = 0.0
     for iter in range(self.opt.iteration):
       # Train for one iter
       for kk in range(2):
@@ -184,11 +203,23 @@ class BaseModel():
         self.train_one_iter_er_()
 
       self.train_one_iter_d()
+      running_loss_g += self.err_g.item()
+      running_loss_er_ += self.err_er_.item()
+      running_loss_d += self.err_d.item()
 
-      print('Superviser training step: '+ str(iter) + '/' + str(self.opt.iteration))
+      if iter > 0 and iter % self.opt.print_freq == 0:
+          self.writer.add_scalar('Joint Loss/ g train', running_loss_g / self.opt.print_freq, iter)
+          self.writer.add_scalar('Joint Loss/ er_ train', running_loss_er_ / self.opt.print_freq, iter)
+          self.writer.add_scalar('Joint Loss/ d train', running_loss_d / self.opt.print_freq, iter)
+          self.writer.flush()
+          running_loss_g = 0.0
+          running_loss_er_ = 0.0
+          running_loss_d = 0.0
+          print('Joint training step: '+ str(iter) + '/' + str(self.opt.iteration))
 
     self.save_weights(self.opt.iteration)
     self.generated_data = self.generation(self.opt.batch_size)
+    self.writer.close()
     print('Finish Synthetic Data Generation')
 
   #  self.evaluation()
@@ -223,12 +254,13 @@ class BaseModel():
     print(metric_results)
 """
 
-  def generation(self, num_samples, mean = 0.0, std = 1.0):
+  #def generation(self, num_samples, mean = 0.0, std = 1.0): #--- see commnet in random_generator method (itamar katz)
+  def generation(self, num_samples, uni_min = 0.0, uni_max = 1.0):
     if num_samples == 0:
       return None, None
     ## Synthetic data generation
     self.X0, self.T = batch_generator(self.ori_data, self.ori_time, self.opt.batch_size)
-    self.Z = random_generator(num_samples, self.opt.z_dim, self.T, self.max_seq_len, mean, std)
+    self.Z = random_generator(num_samples, self.opt.z_dim, self.T, self.max_seq_len, uni_min, uni_max) #mean, std)
     self.Z = torch.tensor(self.Z, dtype=torch.float32).to(self.device)
     self.E_hat = self.netg(self.Z)    # [?, 24, 24]
     self.H_hat = self.nets(self.E_hat)  # [?, 24, 24]
@@ -349,7 +381,8 @@ class TimeGAN(BaseModel):
       """
       self.err_er = self.l_mse(self.X_tilde, self.X)
       self.err_er.backward(retain_graph=True)
-      print("Loss: ", self.err_er)
+      if self.log_batch:
+          print(f"Loss: {self.err_er.item():.4f}")
 
     def backward_er_(self):
       """ Backpropagate through netE
@@ -375,14 +408,16 @@ class TimeGAN(BaseModel):
                    self.err_g_V2 * self.opt.w_g + \
                    torch.sqrt(self.err_s) 
       self.err_g.backward(retain_graph=True)
-      print("Loss G: ", self.err_g)
+      if self.log_batch:
+          print(f"Loss G: {self.err_g.item():.4f}")
 
     def backward_s(self):
       """ Backpropagate through netS
       """
       self.err_s = self.l_mse(self.H[:,1:,:], self.H_supervise[:,:-1,:])
       self.err_s.backward(retain_graph=True)
-      print("Loss S: ", self.err_s)
+      if self.log_batch:
+          print(f"Loss S: {self.err_s.item():.4f}")
    #   print(torch.autograd.grad(self.err_s, self.nets.parameters()))
 
     def backward_d(self):

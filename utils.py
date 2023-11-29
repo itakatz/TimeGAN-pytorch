@@ -76,8 +76,7 @@ def extract_time (data):
     
   return time, max_seq_len
 
-
-def random_generator (batch_size, z_dim, T_mb, max_seq_len):
+def random_generator (batch_size, z_dim, T_mb, max_seq_len, uni_min = 0., uni_max = 1.):
   """Random vector generation.
   
   Args:
@@ -89,12 +88,20 @@ def random_generator (batch_size, z_dim, T_mb, max_seq_len):
   Returns:
     - Z_mb: generated random vector
   """
-  Z_mb = list()
+  Z_mb = np.zeros((batch_size, max_seq_len, z_dim), dtype = np.float32)  #list()
   for i in range(batch_size):
-    temp = np.zeros([max_seq_len, z_dim])
-    temp_Z = np.random.uniform(0., 1, [T_mb[i], z_dim])
+    temp = np.zeros([max_seq_len, z_dim], dtype = np.float32)
+    #temp_Z = np.random.uniform(uni_min, uni_max, [T_mb[i], z_dim]).astype(np.float32)
+    temp_Z = np.random.randn(T_mb[i], z_dim).astype(np.float32)
+    
+    #--- note the original impl uses uniform [0,1], so it makes sense to set defaults of [min,max] and not mean and std
+    #--- transform to Uniform variable with given mean and std
+    #temp_Z = mean - np.sqrt(3) * std + 2 * np.sqrt(3) * std * temp_Z
+    
     temp[:T_mb[i],:] = temp_Z
-    Z_mb.append(temp_Z)
+    #Z_mb.append(temp_Z)
+    Z_mb[i] = temp_Z
+
   return Z_mb
 
 

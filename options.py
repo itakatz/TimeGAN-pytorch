@@ -34,6 +34,11 @@ class Options():
             default=6,
             type=int)
         self.parser.add_argument(
+            '--z_dim_out',
+            help='output data dimension',
+            default=None,
+            type=int)
+        self.parser.add_argument(
             '--seq_len',
             help='sequence length',
             default=24,
