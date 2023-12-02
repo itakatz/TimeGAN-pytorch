@@ -122,7 +122,12 @@ class Options():
 
         # set gpu ids
         if self.opt.device == 'gpu':
-            torch.cuda.set_device(self.opt.gpu_ids[0])
+            if not torch.cuda.is_available():
+                #raise ValueError('device set to "gpu" but cuda is not available. set device to "cpu"')
+                print('device is set to "gpu" but cuda is not available. setting device to "cpu"')
+                self.opt.device = 'cpu'
+            else:
+                torch.cuda.set_device(self.opt.gpu_ids[0])
 
         args = vars(self.opt)
 
