@@ -109,7 +109,7 @@ class BaseModel():
     # train encoder & decoder
     self.optimize_params_er()
 
-  def train_one_iter_er_(self, X0, T):
+  def train_one_iter_er_(self, X0, X0_out, T):
     """ Train the model for one epoch.
     """
 
@@ -117,8 +117,10 @@ class BaseModel():
     self.netr.train()
 
     # set mini-batch
-    self.X0, self.T = X0, T #batch_generator(self.ori_data, self.ori_time, self.opt.batch_size)
+    self.X0, self.X0_out, self.T = X0, X0_out, T #batch_generator(self.ori_data, self.ori_time, self.opt.batch_size)
+    #--- TODO check if we need to copy again to device, e.g if a generator train step was done before embedder_ train step
     self.X = self.X0.to(self.device)
+    self.X_out = self.X0_out.to(self.device)
 
     # train encoder & decoder
     self.optimize_params_er_()
@@ -138,7 +140,7 @@ class BaseModel():
     # train superviser
     self.optimize_params_s()
 
-  def train_one_iter_g(self, X0, T):
+  def train_one_iter_g(self, X0, X0_out, T):
     """ Train the model for one epoch.
     """
 
@@ -148,8 +150,9 @@ class BaseModel():
     self.netg.train()
 
     # set mini-batch
-    self.X0, self.T = X0, T #batch_generator(self.ori_data, self.ori_time, self.opt.batch_size)
+    self.X0, self.X0_out, self.T = X0, X0_out, T #batch_generator(self.ori_data, self.ori_time, self.opt.batch_size)
     self.X = self.X0.to(self.device)
+    self.X_out = self.X0_out.to(self.device)
     batch_size = min(len(self.T), self.opt.batch_size) #--- last batch in epoch is probably smaller
     self.Z = random_generator(batch_size, self.opt.z_dim, self.T, self.max_seq_len)
 
@@ -182,7 +185,7 @@ class BaseModel():
     with torch.no_grad():
       loss = 0.0
       for batch in self.val_dataloader: # range(self.opt.iteration):
-        seq, seq_len = batch
+        seq, _, _ = batch
         # Train for one iter
         self.X = seq.to(self.device)
         self.forward_e()
@@ -204,11 +207,12 @@ class BaseModel():
     with torch.no_grad():
       loss = 0.0
       for batch in self.val_dataloader: # range(self.opt.iteration):
-        seq, seq_len = batch
+        seq, seq_out, seq_len = batch
         # Train for one iter
         self.X = seq.to(self.device)
+        self.X_out = seq_out.to(self.device)
         self.forward_er()
-        err_er = self.l_mse(self.X_tilde, self.X).item()
+        err_er = self.l_mse(self.X_tilde, self.X_out).item()
         loss += err_er
 
     loss /= len(self.val_dataloader)
@@ -223,24 +227,26 @@ class BaseModel():
     val_data = self.val_dataloader.dataset if not get_from_train_set else self.train_dataloader.dataset
     n_val = len(val_data)
     val_example_idx = rng.integers(0, n_val, n_samples)
-    val_examples = np.zeros((n_samples, self.max_seq_len, self.opt.z_dim), dtype = np.float32)
+    val_examples_in = np.zeros((n_samples, self.max_seq_len, self.opt.z_dim), dtype = np.float32)
+    val_examples_out = np.zeros((n_samples, self.max_seq_len, self.opt.z_dim_out), dtype = np.float32)
     for iidx, idx in enumerate(val_example_idx):
-        x, _ = val_data[idx]
-        val_examples[iidx] = x
+        x_in, x_out, _ = val_data[idx]
+        val_examples_in[iidx] = x_in
+        val_examples_out[iidx] = x_out
     
     self.nete.eval()
     self.netr.eval()
     with torch.no_grad():
-        val_examples = torch.tensor(val_examples, dtype = torch.float32).to(self.device)
-        val_examples_tilde = self.netr(self.nete(val_examples))
+        val_examples_in = torch.tensor(val_examples_in, dtype = torch.float32).to(self.device)
+        val_examples_tilde = self.netr(self.nete(val_examples_in))
     
-    val_examples = val_examples.cpu().numpy()
+    #val_examples = val_examples.cpu().numpy()
     val_examples_tilde = val_examples_tilde.detach().cpu().numpy()
     
     self.nete.train()
     self.netr.train()
 
-    return val_examples, val_examples_tilde
+    return val_examples_out, val_examples_tilde
 
   def train(self, log_batch = False):
     """ Train the model
@@ -270,6 +276,7 @@ class BaseModel():
             ax.legend(['x','x_tilde'])
             ax.grid()
             self.writer.add_figure(f'Embedder Val/{ifig}', fig, epoch)
+            plt.close(fig)
             #fig_list.append(fig)
 
         self.writer.flush()
@@ -278,7 +285,7 @@ class BaseModel():
     for epoch in range(self.opt.num_epochs_es):
         train_loss = 0.0
         for batch in self.train_dataloader: # range(self.opt.iteration):
-          seq, seq_len = batch
+          seq, _, seq_len = batch
           
           # Train for one iter
           self.train_one_iter_s(seq, seq_len)
@@ -297,12 +304,12 @@ class BaseModel():
         running_loss_er_ = 0.0
         running_loss_d = 0.0
         for batch in self.train_dataloader: # range(self.opt.iteration):
-          seq, seq_len = batch
+          seq, seq_out, seq_len = batch
     
           # Train for one iter
           for kk in range(2):
-            self.train_one_iter_g(seq, seq_len)
-            self.train_one_iter_er_(seq, seq_len)
+            self.train_one_iter_g(seq, seq_out, seq_len)
+            self.train_one_iter_er_(seq, seq_out, seq_len)
 
           self.train_one_iter_d(seq, seq_len)
           running_loss_g += self.err_g.item()
@@ -524,8 +531,8 @@ class EnvelopeTimeGAN(BaseModel):
       self.err_g_U = self.l_bce(self.Y_fake, torch.ones_like(self.Y_fake))
 
       self.err_g_U_e = self.l_bce(self.Y_fake_e, torch.ones_like(self.Y_fake_e))
-      self.err_g_V1 = torch.mean(torch.abs(torch.sqrt(torch.std(self.X_hat,[0])[1] + 1e-6) - torch.sqrt(torch.std(self.X,[0])[1] + 1e-6)))   # |a^2 - b^2|
-      self.err_g_V2 = torch.mean(torch.abs((torch.mean(self.X_hat,[0])[0]) - (torch.mean(self.X,[0])[0])))  # |a - b|
+      self.err_g_V1 = torch.mean(torch.abs(torch.sqrt(torch.std(self.X_hat,[0])[1] + 1e-6) - torch.sqrt(torch.std(self.X_out,[0])[1] + 1e-6)))   # |a^2 - b^2|
+      self.err_g_V2 = torch.mean(torch.abs((torch.mean(self.X_hat,[0])[0]) - (torch.mean(self.X_out,[0])[0])))  # |a - b|
       self.err_s = self.l_mse(self.H_supervise[:,:-1,:], self.H[:,1:,:])
       self.err_g = self.err_g_U + \
                    self.err_g_U_e * self.opt.w_gamma + \
