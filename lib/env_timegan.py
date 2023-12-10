@@ -280,7 +280,7 @@ class BaseModel():
             #fig_list.append(fig)
 
         self.writer.flush()
-        print(f'Encoder training epoch: {epoch}/{self.opt.num_epochs} training loss {train_loss:.5f}, validation loss {val_loss:.5f}')
+        print(f'Encoder training epoch: {epoch}/{self.opt.num_epochs_es} training loss {train_loss:.5f}, validation loss {val_loss:.5f}')
     
     for epoch in range(self.opt.num_epochs_es):
         train_loss = 0.0
@@ -297,7 +297,7 @@ class BaseModel():
         val_loss_e = self.evaluate_er() #--- DEBUG make sure that back-prop updates embedder (self.nete) as well, so loss must change
         self.writer.add_scalars('Loss Supervised', dict(train = train_loss, validation = val_loss_s), epoch)
         self.writer.flush()
-        print(f'Supervisor training epoch: {epoch}/{self.opt.num_epochs} training loss {train_loss:.5f}, validation loss {val_loss_s:.5f} (embedder loss {val_loss_e:.5f})')
+        print(f'Supervisor training epoch: {epoch}/{self.opt.num_epochs_es} training loss {train_loss:.5f}, validation loss {val_loss_s:.5f} (embedder loss {val_loss_e:.5f})')
     
     for epoch in range(self.opt.num_epochs):
         running_loss_g = 0.0
