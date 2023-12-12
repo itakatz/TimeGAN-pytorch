@@ -30,6 +30,8 @@ from ..utils import extract_time, random_generator, NormMinMax
 from .model import Encoder, Recovery, Generator, Discriminator, Supervisor
 
 
+NUM_MIDI_TOKENS = 128 #--- TODO we actually don't use the whole range
+
 class BaseModel():
   """ Base Model for timegan
   """
@@ -140,7 +142,7 @@ class BaseModel():
     # train superviser
     self.optimize_params_s()
 
-  def train_one_iter_g(self, X0, X0_out, T):
+  def train_one_iter_g(self, X0, X0_out, T, note_ids0, is_note0):
     """ Train the model for one epoch.
     """
 
@@ -151,15 +153,19 @@ class BaseModel():
 
     # set mini-batch
     self.X0, self.X0_out, self.T = X0, X0_out, T #batch_generator(self.ori_data, self.ori_time, self.opt.batch_size)
+    self.note_ids0, self.is_note0 = note_ids0, is_note0
     self.X = self.X0.to(self.device)
     self.X_out = self.X0_out.to(self.device)
+    self.note_ids = self.note_ids0.to(self.device)
+    self.is_note = self.is_note0.to(self.device)
+
     batch_size = min(len(self.T), self.opt.batch_size) #--- last batch in epoch is probably smaller
     self.Z = random_generator(batch_size, self.opt.z_dim, self.T, self.max_seq_len)
 
     # train superviser
     self.optimize_params_g()
 
-  def train_one_iter_d(self, X0, T):
+  def train_one_iter_d(self, X0, T, note_ids0, is_note0):
     """ Train the model for one epoch.
     """
     """self.nete.eval()
@@ -170,13 +176,16 @@ class BaseModel():
 
     # set mini-batch
     self.X0, self.T = X0, T #batch_generator(self.ori_data, self.ori_time, self.opt.batch_size)
+    self.note_ids0, self.is_note0 = note_ids0, is_note0
     self.X = self.X0.to(self.device)
+    self.note_ids = self.note_ids0.to(self.device)
+    self.is_note = self.is_note0.to(self.device)
+    
     batch_size = min(len(self.T), self.opt.batch_size) #--- last batch in epoch is probably smaller
     self.Z = random_generator(batch_size, self.opt.z_dim, self.T, self.max_seq_len)
 
     # train superviser
     self.optimize_params_d()
-
 
   def evaluate_s(self):
     self.nete.eval()
@@ -185,7 +194,7 @@ class BaseModel():
     with torch.no_grad():
       loss = 0.0
       for batch in self.val_dataloader: # range(self.opt.iteration):
-        seq, _, _ = batch
+        seq, _, _, _, _ = batch
         # Train for one iter
         self.X = seq.to(self.device)
         self.forward_e()
@@ -207,7 +216,7 @@ class BaseModel():
     with torch.no_grad():
       loss = 0.0
       for batch in self.val_dataloader: # range(self.opt.iteration):
-        seq, seq_out, seq_len = batch
+        seq, seq_out, seq_len, _, _ = batch
         # Train for one iter
         self.X = seq.to(self.device)
         self.X_out = seq_out.to(self.device)
@@ -222,31 +231,40 @@ class BaseModel():
 
     return loss
 
-  def get_validation_examples(self, n_samples = 5, seed = 42, get_from_train_set = False):
+  def get_validation_examples(self, n_samples = 5, seed = 42, get_from_train_set = False, decode = True):
+    ''' get the 'autoencoder' part validation examples (encode and decode)
+        also return the condional data (notes) for use with the generator
+    '''
     rng = np.random.default_rng(seed)
     val_data = self.val_dataloader.dataset if not get_from_train_set else self.train_dataloader.dataset
     n_val = len(val_data)
     val_example_idx = rng.integers(0, n_val, n_samples)
     val_examples_in = np.zeros((n_samples, self.max_seq_len, self.opt.z_dim), dtype = np.float32)
     val_examples_out = np.zeros((n_samples, self.max_seq_len, self.opt.z_dim_out), dtype = np.float32)
+    val_examples_note_ids = np.zeros_like(val_examples_in)
+    val_examples_is_note = np.zeros_like(val_examples_in)
     for iidx, idx in enumerate(val_example_idx):
-        x_in, x_out, _ = val_data[idx]
+        x_in, x_out, _, note_id, is_note = val_data[idx]
         val_examples_in[iidx] = x_in
         val_examples_out[iidx] = x_out
+        val_examples_note_ids[iidx] = note_id
+        val_examples_is_note[iidx] = is_note
     
-    self.nete.eval()
-    self.netr.eval()
-    with torch.no_grad():
-        val_examples_in = torch.tensor(val_examples_in, dtype = torch.float32).to(self.device)
-        val_examples_tilde = self.netr(self.nete(val_examples_in))
+    val_examples_tilde = None
+    if decode:
+        self.nete.eval()
+        self.netr.eval()
+        with torch.no_grad():
+            val_examples_in = torch.tensor(val_examples_in, dtype = torch.float32).to(self.device)
+            val_examples_tilde = self.netr(self.nete(val_examples_in))
     
-    #val_examples = val_examples.cpu().numpy()
-    val_examples_tilde = val_examples_tilde.detach().cpu().numpy()
+        #val_examples = val_examples.cpu().numpy()
+        val_examples_tilde = val_examples_tilde.detach().cpu().numpy()
     
-    self.nete.train()
-    self.netr.train()
+        self.nete.train()
+        self.netr.train()
 
-    return val_examples_out, val_examples_tilde
+    return val_examples_out, val_examples_tilde, val_examples_note_ids, val_examples_is_note
 
   def train(self, log_batch = False):
     """ Train the model
@@ -255,7 +273,7 @@ class BaseModel():
     for epoch in range(self.opt.num_epochs_es):
         train_loss = 0.0
         for batch in self.train_dataloader: # range(self.opt.iteration):
-          seq, seq_out, seq_len = batch
+          seq, seq_out, seq_len, note_ids, is_note = batch
           # Train for one iter
           self.train_one_iter_er(seq, seq_out, seq_len)
           train_loss += self.err_er.item()
@@ -265,7 +283,7 @@ class BaseModel():
         #  if iter > 0 and iter % self.opt.print_freq == 0:
         train_loss /= len(self.train_dataloader)
         val_loss = self.evaluate_er()
-        val_x, val_x_tilde = self.get_validation_examples()
+        val_x, val_x_tilde, _, _ = self.get_validation_examples()
         self.writer.add_scalars('Loss Embedder', dict(train = train_loss, validation = val_loss), epoch)
         #fig_list = []
         k = 0 # which channel to plot (the auto-encoder decodes all channels - TODO consider just decode 1 channel??)
@@ -285,7 +303,7 @@ class BaseModel():
     for epoch in range(self.opt.num_epochs_es):
         train_loss = 0.0
         for batch in self.train_dataloader: # range(self.opt.iteration):
-          seq, _, seq_len = batch
+          seq, _, seq_len, _, _ = batch
           
           # Train for one iter
           self.train_one_iter_s(seq, seq_len)
@@ -304,14 +322,14 @@ class BaseModel():
         running_loss_er_ = 0.0
         running_loss_d = 0.0
         for batch in self.train_dataloader: # range(self.opt.iteration):
-          seq, seq_out, seq_len = batch
+          seq, seq_out, seq_len, note_ids, is_note = batch
     
           # Train for one iter
           for kk in range(2):
-            self.train_one_iter_g(seq, seq_out, seq_len)
+            self.train_one_iter_g(seq, seq_out, seq_len, note_ids, is_note)
             self.train_one_iter_er_(seq, seq_out, seq_len)
 
-          self.train_one_iter_d(seq, seq_len)
+          self.train_one_iter_d(seq, seq_len, note_ids, is_note)
           running_loss_g += self.err_g.item()
           running_loss_er_ += self.err_er_.item()
           running_loss_d += self.err_d.item()
@@ -381,14 +399,19 @@ class BaseModel():
       return None, None
     ## Synthetic data generation
     #self.X0, self.T = batch_generator(self.ori_data, self.ori_time, self.opt.batch_size)
+    _, _, note_ids, is_note = self.get_validation_examples(n_samples = num_samples, decode = False)
     T = [self.max_seq_len] * num_samples
     self.Z = random_generator(num_samples, self.opt.z_dim, T, self.max_seq_len, uni_min, uni_max) #mean, std)
     self.Z = torch.tensor(self.Z, dtype=torch.float32).to(self.device)
+    
+    note_ids = torch.tensor(note_ids, dtype = torch.int).to(self.device)
+    is_note = torch.tensor(is_note, dtype = torch.int).to(self.device)
+    
     self.netg.eval()
     self.nets.eval()
     self.netr.eval()
     with torch.no_grad():
-        self.E_hat = self.netg(self.Z)    # [?, 24, 24]
+        self.E_hat = self.netg(self.Z, note_ids, is_note)    # [?, 24, 24]
         self.H_hat = self.nets(self.E_hat)  # [?, 24, 24]
         generated_data_curr = self.netr(self.H_hat).cpu().detach().numpy()  # [?, 24, 24]
     
@@ -427,10 +450,11 @@ class EnvelopeTimeGAN(BaseModel):
       self.total_steps = 0
 
       # Create and initialize networks.
+      self.net_note_embed = nn.Embedding(NUM_MIDI_TOKENS, opt.embedding_dim)
       self.nete = Encoder(self.opt).to(self.device)
       self.netr = Recovery(self.opt).to(self.device)
-      self.netg = Generator(self.opt).to(self.device)
-      self.netd = Discriminator(self.opt).to(self.device)
+      self.netg = Generator(self.opt, self.net_note_embed).to(self.device)
+      self.netd = Discriminator(self.opt, self.net_note_embed).to(self.device)
       self.nets = Supervisor(self.opt).to(self.device)
 
       if self.opt.resume != '':
@@ -477,16 +501,16 @@ class EnvelopeTimeGAN(BaseModel):
       """ Forward propagate through netG
       """
       self.Z = torch.tensor(self.Z, dtype=torch.float32).to(self.device)
-      self.E_hat = self.netg(self.Z)
+      self.E_hat = self.netg(self.Z, self.note_ids, self.is_note)
     
     def forward_dg(self):
       """ Forward propagate through netD
       """
-      self.Y_fake = self.netd(self.H_hat)
-      self.Y_fake_e = self.netd(self.E_hat)
+      self.Y_fake = self.netd(self.H_hat, self.note_ids, self.is_note)
+      self.Y_fake_e = self.netd(self.E_hat, self.note_ids, self.is_note)
 
     def forward_rg(self):
-      """ Forward propagate through netG
+      """ Forward propagate through netR
       """
       self.X_hat = self.netr(self.H_hat)
 
@@ -504,9 +528,9 @@ class EnvelopeTimeGAN(BaseModel):
     def forward_d(self):
       """ Forward propagate through netD
       """
-      self.Y_real = self.netd(self.H)
-      self.Y_fake = self.netd(self.H_hat)
-      self.Y_fake_e = self.netd(self.E_hat)
+      self.Y_real = self.netd(self.H, self.note_ids, self.is_note)
+      self.Y_fake = self.netd(self.H_hat, self.note_ids, self.is_note)
+      self.Y_fake_e = self.netd(self.E_hat, self.note_ids, self.is_note)
 
     def backward_er(self):
       """ Backpropagate through netE

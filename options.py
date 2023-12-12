@@ -29,6 +29,11 @@ class Options():
             default='stock',
             type=str)
         self.parser.add_argument(
+            '--embedding_dim',
+            help='note embedding dimension',
+            default=64,
+            type=int)
+        self.parser.add_argument(
             '--z_dim',
             help='z or data dimension',
             default=6,

@@ -110,7 +110,6 @@ class Recovery(nn.Module):
             X_tilde = self.sigmoid(X_tilde)
         return X_tilde
 
-
 class Generator(nn.Module):
     """Generator function: Generate time-series data in latent space.
 
@@ -121,23 +120,30 @@ class Generator(nn.Module):
     Returns:
       - E: generated embedding
     """
-    def __init__(self, opt):
+    def __init__(self, opt, note_embedder):
         super(Generator, self).__init__()
+            
+        self.embed = note_embedder #nn.Embedding(NUM_MIDI_TOKENS, opt.embedding_dim)
+        history_len_samples = opt.z_dim #--- this is hacky, TODO (input dim of encoder input is the history len)
+        rnn_inp_dim = opt.z_dim + (opt.embedding_dim + 1) * history_len_samples
+        
         _rnn = _RNN(opt)
-        self.rnn = _rnn(input_size=opt.z_dim, hidden_size=opt.hidden_dim, num_layers=opt.num_layer, batch_first = True)
+        self.rnn = _rnn(input_size = rnn_inp_dim, hidden_size = opt.hidden_dim, num_layers = opt.num_layer, batch_first = True)
      #   self.norm = nn.LayerNorm(opt.hidden_dim)
         self.fc = nn.Linear(opt.hidden_dim, opt.hidden_dim)
         self.sigmoid = Activation() #n.Sigmoid()
         self.apply(_weights_init)
 
-    def forward(self, input, sigmoid=True):
-        g_outputs, _ = self.rnn(input)
+    def forward(self, z, note_ids, is_note, sigmoid = True):
+        batch_size, seq_len = z.shape[0:2]
+        note_emb = self.embed(note_ids).reshape(batch_size, seq_len, -1)
+        z = torch.concat([z, note_emb, is_note], dim = 2)
+        g_outputs, _ = self.rnn(z)
       #  g_outputs = self.norm(g_outputs)
         E = self.fc(g_outputs)
         if sigmoid:
             E = self.sigmoid(E)
         return E
-
 
 class Supervisor(nn.Module):
     """Generate next sequence using the previous sequence.
@@ -177,22 +183,30 @@ class Discriminator(nn.Module):
     Returns:
       - Y_hat: classification results between original and synthetic time-series
     """
-    def __init__(self, opt):
+    def __init__(self, opt, note_embedder):
         super(Discriminator, self).__init__()
+
+        self.embed = note_embedder
+        history_len_samples = opt.z_dim #--- this is hacky, TODO (input dim of encoder input is the history len)
+        rnn_inp_dim = opt.hidden_dim + (opt.embedding_dim + 1) * history_len_samples
+        
         _rnn = _RNN(opt)
-        self.rnn = _rnn(input_size=opt.hidden_dim, hidden_size=opt.hidden_dim, num_layers=opt.num_layer, batch_first = True, dropout = 0.)
+        self.rnn = _rnn(input_size = rnn_inp_dim, hidden_size = opt.hidden_dim, num_layers = opt.num_layer, batch_first = True, dropout = 0.)
       #  self.norm = nn.LayerNorm(opt.hidden_dim)
         fc_out_dim = 1 #opt.hidden_dim # 1 # that's the original impl, but makes sense to set to 1 (binary classification)
         self.fc = nn.Linear(opt.hidden_dim, fc_out_dim)
         self.sigmoid = nn.Sigmoid()
         self.apply(_weights_init)
 
-    def forward(self, input, sigmoid = False, use_last_hidden = False): #True):
+    def forward(self, h_input, note_ids, is_note, sigmoid = False, use_last_hidden = False): #True):
         #--- NOTE(2) I set the default value of "sigmoid" to False, since I change the BCE loss to BCEWithLogitsLoss
         #--- NOTE(1) that if use_last_hidden is set to False, output will be of size [batch X seq_len X 1], and the bce loss will average over the 2nd dim (that's its default)
         #--- TODO add the option to reduce using a concatenation of max and avg pooling over seq of hidden states, aka "concat pooling" 
         #--- (see https://medium.com/@sonicboom8/sentiment-analysis-with-variable-length-sequences-in-pytorch-6241635ae130)
-        d_outputs, _ = self.rnn(input)
+        batch_size, seq_len = h_input.shape[0:2]
+        note_emb = self.embed(note_ids).reshape(batch_size, seq_len, -1)
+        h_input = torch.concat([h_input, note_emb, is_note], dim = 2)
+        d_outputs, _ = self.rnn(h_input)
         if use_last_hidden:
             d_outputs = d_outputs[:, -1, :]
         Y_hat = self.fc(d_outputs)
