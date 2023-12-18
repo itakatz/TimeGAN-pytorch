@@ -54,6 +54,11 @@ class Options():
             default='gru',
             type=str)
         self.parser.add_argument(
+            '--latent_dim',
+            help='latent space dimensions (generator input)',
+            default=32,
+            type=int)
+        self.parser.add_argument(
             '--hidden_dim',
             help='hidden state dimensions (should be optimized)',
             default=24,

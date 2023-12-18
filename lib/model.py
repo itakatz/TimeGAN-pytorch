@@ -125,7 +125,7 @@ class Generator(nn.Module):
             
         self.embed = note_embedder #nn.Embedding(NUM_MIDI_TOKENS, opt.embedding_dim)
         history_len_samples = opt.z_dim #--- this is hacky, TODO (input dim of encoder input is the history len)
-        rnn_inp_dim = opt.z_dim + (opt.embedding_dim + 1) * history_len_samples
+        rnn_inp_dim = opt.latent_dim + (opt.embedding_dim + 2) * history_len_samples
         
         _rnn = _RNN(opt)
         self.rnn = _rnn(input_size = rnn_inp_dim, hidden_size = opt.hidden_dim, num_layers = opt.num_layer, batch_first = True)
@@ -134,10 +134,10 @@ class Generator(nn.Module):
         self.sigmoid = Activation() #n.Sigmoid()
         self.apply(_weights_init)
 
-    def forward(self, z, note_ids, is_note, sigmoid = True):
+    def forward(self, z, note_ids, note_en, is_note, sigmoid = True):
         batch_size, seq_len = z.shape[0:2]
         note_emb = self.embed(note_ids).reshape(batch_size, seq_len, -1)
-        z = torch.concat([z, note_emb, is_note], dim = 2)
+        z = torch.concat([z, note_emb, note_en, is_note], dim = 2)
         g_outputs, _ = self.rnn(z)
       #  g_outputs = self.norm(g_outputs)
         E = self.fc(g_outputs)
@@ -188,7 +188,7 @@ class Discriminator(nn.Module):
 
         self.embed = note_embedder
         history_len_samples = opt.z_dim #--- this is hacky, TODO (input dim of encoder input is the history len)
-        rnn_inp_dim = opt.hidden_dim + (opt.embedding_dim + 1) * history_len_samples
+        rnn_inp_dim = opt.hidden_dim + (opt.embedding_dim + 2) * history_len_samples
         
         _rnn = _RNN(opt)
         self.rnn = _rnn(input_size = rnn_inp_dim, hidden_size = opt.hidden_dim, num_layers = opt.num_layer, batch_first = True, dropout = 0.)
@@ -198,14 +198,14 @@ class Discriminator(nn.Module):
         self.sigmoid = nn.Sigmoid()
         self.apply(_weights_init)
 
-    def forward(self, h_input, note_ids, is_note, sigmoid = False, use_last_hidden = False): #True):
+    def forward(self, h_input, note_ids, note_en, is_note, sigmoid = False, use_last_hidden = False): #True):
         #--- NOTE(2) I set the default value of "sigmoid" to False, since I change the BCE loss to BCEWithLogitsLoss
         #--- NOTE(1) that if use_last_hidden is set to False, output will be of size [batch X seq_len X 1], and the bce loss will average over the 2nd dim (that's its default)
         #--- TODO add the option to reduce using a concatenation of max and avg pooling over seq of hidden states, aka "concat pooling" 
         #--- (see https://medium.com/@sonicboom8/sentiment-analysis-with-variable-length-sequences-in-pytorch-6241635ae130)
         batch_size, seq_len = h_input.shape[0:2]
         note_emb = self.embed(note_ids).reshape(batch_size, seq_len, -1)
-        h_input = torch.concat([h_input, note_emb, is_note], dim = 2)
+        h_input = torch.concat([h_input, note_emb, note_en, is_note], dim = 2)
         d_outputs, _ = self.rnn(h_input)
         if use_last_hidden:
             d_outputs = d_outputs[:, -1, :]
