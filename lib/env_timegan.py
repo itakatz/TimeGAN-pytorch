@@ -85,18 +85,17 @@ class BaseModel():
       os.makedirs(weight_dir)
 
     torch.save({'epoch': epoch + 1, 'state_dict': self.net_note_embed.state_dict()},
-               '%s/netNE.pth' % (weight_dir))
+               f'{weight_dir}/netNE_epoch{epoch}.pth')
     torch.save({'epoch': epoch + 1, 'state_dict': self.nete.state_dict()},
-               '%s/netE.pth' % (weight_dir))
+               f'{weight_dir}/netE_epoch{epoch}.pth')
     torch.save({'epoch': epoch + 1, 'state_dict': self.netr.state_dict()},
-               '%s/netR.pth' % (weight_dir))
+               f'{weight_dir}/netR_epoch{epoch}.pth')
     torch.save({'epoch': epoch + 1, 'state_dict': self.netg.state_dict()},
-               '%s/netG.pth' % (weight_dir))
+               f'{weight_dir}/netG_epoch{epoch}.pth')
     torch.save({'epoch': epoch + 1, 'state_dict': self.netd.state_dict()},
-               '%s/netD.pth' % (weight_dir))
+               f'{weight_dir}/netD_epoch{epoch}.pth')
     torch.save({'epoch': epoch + 1, 'state_dict': self.nets.state_dict()},
-               '%s/netS.pth' % (weight_dir))
-
+               f'{weight_dir}/netS_epoch{epoch}.pth')
 
   def train_one_iter_er(self, X0, X0_out, T):
     """ Train the model for one epoch.
@@ -413,8 +412,11 @@ class BaseModel():
 
         self.writer.flush()
         print(f'Joint training epoch: {epoch}/{self.opt.num_epochs} loss gen: {running_loss_g:.5f} disc: {running_loss_d:.5f} disc acc real/fake/fake_e: {acc_real:.3f}/{acc_fake:.3f}/{acc_fake_e:.3f}')
+        if epoch % 10 == 0:
+            print(f'epoch {epoch}, saving models')
+            self.save_weights(epoch)
     
-    self.save_weights(self.opt.iteration)
+    self.save_weights(epoch)
     self.generated_data = self.generation(self.opt.batch_size)
     self.writer.close()
     print('Finish Synthetic Data Generation')
@@ -480,7 +482,7 @@ class BaseModel():
     self.nets.train()
     self.netr.train()
 
-    return generated_data_curr, seq_out
+    return generated_data_curr, seq_out, note_ids, note_en
 
     #generated_data = list()
     #for i in range(num_samples):
@@ -519,14 +521,15 @@ class EnvelopeTimeGAN(BaseModel):
       self.nets = Supervisor(self.opt).to(self.device)
 
       if self.opt.resume != '':
+        epoch_str = f'_epoch{opt.resume_epoch}' if 'resume_epoch' in opt else ''
         print("\nLoading pre-trained networks.")
-        self.opt.iter = torch.load(os.path.join(self.opt.resume, 'netG.pth'))['epoch']
-        self.net_note_embed.load_state_dict(torch.load(os.path.join(self.opt.resume, 'netNE.pth'))['state_dict'])
-        self.nete.load_state_dict(torch.load(os.path.join(self.opt.resume, 'netE.pth'))['state_dict'])
-        self.netr.load_state_dict(torch.load(os.path.join(self.opt.resume, 'netR.pth'))['state_dict'])
-        self.netg.load_state_dict(torch.load(os.path.join(self.opt.resume, 'netG.pth'))['state_dict'])
-        self.netd.load_state_dict(torch.load(os.path.join(self.opt.resume, 'netD.pth'))['state_dict'])
-        self.nets.load_state_dict(torch.load(os.path.join(self.opt.resume, 'netS.pth'))['state_dict'])
+        self.opt.iter = torch.load(os.path.join(self.opt.resume, f'netG{epoch_str}.pth'))['epoch']
+        self.net_note_embed.load_state_dict(torch.load(os.path.join(self.opt.resume, f'netNE{epoch_str}.pth'))['state_dict'])
+        self.nete.load_state_dict(torch.load(os.path.join(self.opt.resume, f'netE{epoch_str}.pth'))['state_dict'])
+        self.netr.load_state_dict(torch.load(os.path.join(self.opt.resume, f'netR{epoch_str}.pth'))['state_dict'])
+        self.netg.load_state_dict(torch.load(os.path.join(self.opt.resume, f'netG{epoch_str}.pth'))['state_dict'])
+        self.netd.load_state_dict(torch.load(os.path.join(self.opt.resume, f'netD{epoch_str}.pth'))['state_dict'])
+        self.nets.load_state_dict(torch.load(os.path.join(self.opt.resume, f'netS{epoch_str}.pth'))['state_dict'])
         print("\tDone.\n")
 
       # loss
@@ -626,8 +629,13 @@ class EnvelopeTimeGAN(BaseModel):
       #self.err_g_U = self.l_bce(self.Y_fake, torch.ones_like(self.Y_fake))
       #self.err_g_U_e = self.l_bce(self.Y_fake_e, torch.ones_like(self.Y_fake_e))
       
-      self.err_g_V1 = torch.mean(torch.abs(torch.sqrt(torch.std(self.X_hat,[0])[1] + 1e-6) - torch.sqrt(torch.std(self.X_out,[0])[1] + 1e-6)))   # |a^2 - b^2|
-      self.err_g_V2 = torch.mean(torch.abs((torch.mean(self.X_hat,[0])[0]) - (torch.mean(self.X_out,[0])[0])))  # |a - b|
+      #--- these moments calculations are wrong, seems a copy-paste from the tf impl which uses tf.nn.moments
+      #self.err_g_V1 = torch.mean(torch.abs(torch.sqrt(torch.std(self.X_hat,[0])[1] + 1e-6) - torch.sqrt(torch.std(self.X_out,[0])[1] + 1e-6)))   # |a^2 - b^2|
+      #self.err_g_V2 = torch.mean(torch.abs((torch.mean(self.X_hat,[0])[0]) - (torch.mean(self.X_out,[0])[0])))  # |a - b|
+      m_dim = self.opt.generator_loss_moments_axis
+      self.err_g_V1 = torch.mean(torch.abs(torch.sqrt(torch.std(self.X_hat, dim = m_dim) + 1e-6) - torch.sqrt(torch.std(self.X_out, dim = m_dim) + 1e-6)))   # |a^2 - b^2|
+      self.err_g_V2 = torch.mean(torch.abs(torch.mean(self.X_hat, dim = m_dim) - torch.mean(self.X_out, dim = m_dim)))  # |a - b|
+
       self.err_s = self.l_mse(self.H_supervise[:,:-1,:], self.H[:,1:,:])
       self.err_g = self.err_g_U + \
                    self.err_g_U_e * self.opt.w_gamma + \
