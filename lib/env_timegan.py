@@ -318,57 +318,60 @@ class BaseModel():
 
     return val_examples_out, val_examples_tilde, val_examples_note_ids, val_examples_note_en, val_examples_is_note
 
-  def train(self, log_batch = False):
+  def train(self, log_batch = False, joint_train_only = False):
     """ Train the model
+        joint_train_only: if False, skip the first 2 stages of training the AE (encoder and recover networks) and the supervised network (note these networks' parmas can still be tuned in the joint training stage)
+                           Use together with load_AE_and_S to start training form the joint training stage
     """
     iter_all = 0
-    for epoch in range(self.opt.num_epochs_es):
-        train_loss = 0.0
-        for batch in self.train_dataloader: # range(self.opt.iteration):
-            #seq, seq_out, seq_len, note_ids, note_en, is_note = batch
-            seq, seq_out, seq_len, _, _, _ = batch
-            # Train for one iter
-            self.train_one_iter_er(seq, seq_out, seq_len)
-            train_loss += self.err_er.item()
-            iter_all += 1
+    if not joint_train_only:
+        for epoch in range(self.opt.num_epochs_es):
+            train_loss = 0.0
+            for batch in self.train_dataloader: # range(self.opt.iteration):
+                #seq, seq_out, seq_len, note_ids, note_en, is_note = batch
+                seq, seq_out, seq_len, _, _, _ = batch
+                # Train for one iter
+                self.train_one_iter_er(seq, seq_out, seq_len)
+                train_loss += self.err_er.item()
+                iter_all += 1
 
-        #--- report at epoch end
-        #  if iter > 0 and iter % self.opt.print_freq == 0:
-        train_loss /= len(self.train_dataloader)
-        val_loss = self.evaluate_er()
-        val_x, val_x_tilde, _, _, _= self.get_validation_examples()
-        self.writer.add_scalars('Loss Embedder', dict(train = train_loss, validation = val_loss), epoch)
-        #fig_list = []
-        k = 0 # which channel to plot (the auto-encoder decodes all channels - TODO consider just decode 1 channel??)
-        for ifig in range(val_x.shape[0]):
-            fig, ax = plt.subplots()
-            ax.plot(val_x[ifig,:,k], 'o')
-            ax.plot(val_x_tilde[ifig,:,k], 'x')
-            ax.legend(['x','x_tilde'])
-            ax.grid()
-            self.writer.add_figure(f'Embedder Val/{ifig}', fig, epoch)
-            plt.close(fig)
-            #fig_list.append(fig)
+            #--- report at epoch end
+            #  if iter > 0 and iter % self.opt.print_freq == 0:
+            train_loss /= len(self.train_dataloader)
+            val_loss = self.evaluate_er()
+            val_x, val_x_tilde, _, _, _= self.get_validation_examples()
+            self.writer.add_scalars('Loss Embedder', dict(train = train_loss, validation = val_loss), epoch)
+            #fig_list = []
+            k = 0 # which channel to plot (the auto-encoder decodes all channels - TODO consider just decode 1 channel??)
+            for ifig in range(val_x.shape[0]):
+                fig, ax = plt.subplots()
+                ax.plot(val_x[ifig,:,k], 'o')
+                ax.plot(val_x_tilde[ifig,:,k], 'x')
+                ax.legend(['x','x_tilde'])
+                ax.grid()
+                self.writer.add_figure(f'Embedder Val/{ifig}', fig, epoch)
+                plt.close(fig)
+                #fig_list.append(fig)
 
-        self.writer.flush()
-        print(f'Encoder training epoch: {epoch}/{self.opt.num_epochs_es} training loss {train_loss:.5f}, validation loss {val_loss:.5f}')
-    
-    for epoch in range(self.opt.num_epochs_es):
-        train_loss = 0.0
-        for batch in self.train_dataloader: # range(self.opt.iteration):
-          seq, _, seq_len, _, _, _ = batch
-          
-          # Train for one iter
-          self.train_one_iter_s(seq, seq_len)
-          train_loss += self.err_s.item()
+            self.writer.flush()
+            print(f'Encoder training epoch: {epoch}/{self.opt.num_epochs_es} training loss {train_loss:.5f}, validation loss {val_loss:.5f}')
+        
+        for epoch in range(self.opt.num_epochs_es):
+            train_loss = 0.0
+            for batch in self.train_dataloader: # range(self.opt.iteration):
+              seq, _, seq_len, _, _, _ = batch
+              
+              # Train for one iter
+              self.train_one_iter_s(seq, seq_len)
+              train_loss += self.err_s.item()
 
-        #if iter > 0 and iter % self.opt.print_freq == 0:
-        train_loss /= len(self.train_dataloader)
-        val_loss_s = self.evaluate_s()
-        val_loss_e = self.evaluate_er() #--- DEBUG make sure that back-prop updates embedder (self.nete) as well, so loss must change
-        self.writer.add_scalars('Loss Supervised', dict(train = train_loss, validation = val_loss_s), epoch)
-        self.writer.flush()
-        print(f'Supervisor training epoch: {epoch}/{self.opt.num_epochs_es} training loss {train_loss:.5f}, validation loss {val_loss_s:.5f} (embedder loss {val_loss_e:.5f})')
+            #if iter > 0 and iter % self.opt.print_freq == 0:
+            train_loss /= len(self.train_dataloader)
+            val_loss_s = self.evaluate_s()
+            val_loss_e = self.evaluate_er() #--- DEBUG make sure that back-prop updates embedder (self.nete) as well, so loss must change
+            self.writer.add_scalars('Loss Supervised', dict(train = train_loss, validation = val_loss_s), epoch)
+            self.writer.flush()
+            print(f'Supervisor training epoch: {epoch}/{self.opt.num_epochs_es} training loss {train_loss:.5f}, validation loss {val_loss_s:.5f} (embedder loss {val_loss_e:.5f})')
     
     for epoch in range(self.opt.num_epochs):
         running_loss_g = 0.0
@@ -400,7 +403,7 @@ class BaseModel():
             
         #--- plot generated samples
         num_to_generate = 8
-        generated_samples, conditioned_env = self.generation(num_to_generate)
+        generated_samples, conditioned_env, _, _ = self.generation(num_to_generate)
         k = 0 # which channel to plot (the auto-encoder decodes all channels - TODO consider just decode 1 channel??)
         for ifig in range(num_to_generate):
             fig, ax = plt.subplots()
@@ -454,6 +457,7 @@ class BaseModel():
 """
 
   #def generation(self, num_samples, mean = 0.0, std = 1.0): #--- see commnet in random_generator method (itamar katz)
+  #--- TODO enable passing random seed to give to get_validation_examples (but, for full reproducability,  we also need to control the sampling of segment from each example, which happens in the __getitem__ method of the dataset)
   def generation(self, num_samples, uni_min = 0.0, uni_max = 1.0):
     if num_samples == 0:
       return None, None
@@ -471,6 +475,7 @@ class BaseModel():
     self.netg.eval()
     self.nets.eval()
     self.netr.eval()
+    self.netd.eval()
     with torch.no_grad():
         self.E_hat = self.netg(self.Z, note_ids, note_en, is_note)    # [?, 24, 24]
         self.H_hat = self.nets(self.E_hat)  # [?, 24, 24]
@@ -481,6 +486,7 @@ class BaseModel():
     self.netg.train()
     self.nets.train()
     self.netr.train()
+    self.netd.train()
 
     return generated_data_curr, seq_out, note_ids, note_en
 
@@ -534,7 +540,7 @@ class EnvelopeTimeGAN(BaseModel):
 
       # loss
       self.l_mse = nn.MSELoss()
-      self.l_r = nn.L1Loss()
+      self.l_L1 = nn.L1Loss()
       self.l_bce = nn.BCEWithLogitsLoss() #snn.BCELoss()
 
       # Setup optimizer
@@ -550,6 +556,15 @@ class EnvelopeTimeGAN(BaseModel):
         self.optimizer_d = optim.Adam(self.netd.parameters(), lr=self.opt.lr, betas=(self.opt.beta1, 0.999))
         self.optimizer_s = optim.Adam(self.nets.parameters(), lr=self.opt.lr, betas=(self.opt.beta1, 0.999))
 
+    def load_AE_and_S(self, checkpoint_folder, epoch):
+        self.nete.load_state_dict(torch.load(os.path.join(checkpoint_folder, f'netE_epoch{epoch}.pth'))['state_dict'])
+        self.netr.load_state_dict(torch.load(os.path.join(checkpoint_folder, f'netR_epoch{epoch}.pth'))['state_dict'])
+        self.nets.load_state_dict(torch.load(os.path.join(checkpoint_folder, f'netS_epoch{epoch}.pth'))['state_dict'])
+        if self.opt.isTrain:
+          self.nete.train()
+          self.netr.train()
+          self.nets.train()
+        #--- TODO should I define the optimizers as well?
 
     def forward_e(self):
       """ Forward propagate through netE
@@ -629,22 +644,54 @@ class EnvelopeTimeGAN(BaseModel):
       #self.err_g_U = self.l_bce(self.Y_fake, torch.ones_like(self.Y_fake))
       #self.err_g_U_e = self.l_bce(self.Y_fake_e, torch.ones_like(self.Y_fake_e))
       
-      #--- these moments calculations are wrong, seems a copy-paste from the tf impl which uses tf.nn.moments
+      #--- these moments calculations are wrong, seems a copy-paste from the tf impl which uses tf.nn.moments (wrong code takes only last sample, and calculates sqrt(std) instead of std
       #self.err_g_V1 = torch.mean(torch.abs(torch.sqrt(torch.std(self.X_hat,[0])[1] + 1e-6) - torch.sqrt(torch.std(self.X_out,[0])[1] + 1e-6)))   # |a^2 - b^2|
       #self.err_g_V2 = torch.mean(torch.abs((torch.mean(self.X_hat,[0])[0]) - (torch.mean(self.X_out,[0])[0])))  # |a - b|
       m_dim = self.opt.generator_loss_moments_axis
-      self.err_g_V1 = torch.mean(torch.abs(torch.sqrt(torch.std(self.X_hat, dim = m_dim) + 1e-6) - torch.sqrt(torch.std(self.X_out, dim = m_dim) + 1e-6)))   # |a^2 - b^2|
+      self.err_g_V1 = torch.mean(torch.abs(torch.std(self.X_hat, dim = m_dim) - torch.std(self.X_out, dim = m_dim)))   # |a^2 - b^2|
       self.err_g_V2 = torch.mean(torch.abs(torch.mean(self.X_hat, dim = m_dim) - torch.mean(self.X_out, dim = m_dim)))  # |a - b|
+      #--- TODO add here loss of note's energy (need to extract it from the generated samples using is_note segments) - not sure it's needed, it's related/correlated with overall L1 loss of envelope diffs
+
+      #--- add L1 loss on output (real vs generated) - maybe also add for the hidden representation H?
+      self.err_l1 = self.l_L1(self.X_hat, self.X_out)
+
+      #--- add smoothness loss
+      self.err_smoothness = torch.diff(self.X_hat, dim = 1).abs().mean() #--- last "mean" operates on both time axis and batch axis
 
       self.err_s = self.l_mse(self.H_supervise[:,:-1,:], self.H[:,1:,:])
       self.err_g = self.err_g_U + \
                    self.err_g_U_e * self.opt.w_gamma + \
                    self.err_g_V1 * self.opt.w_g + \
                    self.err_g_V2 * self.opt.w_g + \
-                   torch.sqrt(self.err_s) 
+                   self.err_smoothness * self.opt.w_smooth + \
+                   self.err_l1 * self.opt.w_l1 + \
+                   torch.sqrt(self.err_s)
+
       self.err_g.backward(retain_graph=True)
       if self.log_batch:
           print(f"Loss G: {self.err_g.item():.4f}")
+
+      #--- plotting some figs of real and generated envs
+      if False:
+          #m = self
+          loss_info = pd.Series([l.item() for l in [m.err_g_U, m.err_g_U_e * m.opt.w_gamma, m.err_g_V1 * m.opt.w_g,m.err_g_V2 * m.opt.w_g, torch.sqrt(m.err_s), m.err_smoothness*m.opt.w_g, m.err_l1*m.opt.w_l1]], index=['fake d loss','fake_e d loss','V1 (std loss)', 'V2 (mean loss)','s loss','smooth loss', 'L1_loss'])
+          gen=iter(train_loader)
+          batch=next(gen)
+          xin,xout,xlen, note_id,note_en,is_note = batch
+          model.train_one_iter_g(xin, xout,xlen,note_id,note_en,is_note)
+          #model.train_one_iter_g(xin, xout,xlen,note_id,note_en,is_note)
+          xhat,xgt=[x_.detach().cpu().numpy() for x_ in [self.X_hat,self.X_out]]
+          plt.close('all')
+          fig,ax=plt.subplots(4,4)
+          fig.set_size_inches((18,12))
+          cnt=0
+          for ii in range(4):
+            for jj in range(4):
+                ax[ii,jj].plot(xgt[cnt,:,0],'o-')
+                ax[ii,jj].plot(xhat[cnt,:,0],'.-')
+                ax[ii,jj].grid()
+                ax[ii,jj].legend(['gt','generated'])
+                cnt+=1
 
     def backward_s(self):
       """ Backpropagate through netS
@@ -673,9 +720,10 @@ class EnvelopeTimeGAN(BaseModel):
       #self.err_d_real = self.l_bce(self.Y_real, torch.ones_like(self.Y_real))
       #self.err_d_fake = self.l_bce(self.Y_fake, torch.zeros_like(self.Y_fake))
       #self.err_d_fake_e = self.l_bce(self.Y_fake_e, torch.zeros_like(self.Y_fake_e))
+      #--- scale the error on fake such that it has the same weight as error on real (we have 2 fake terms for each 1 real term)
       self.err_d = self.err_d_real + \
-                   self.err_d_fake + \
-                   self.err_d_fake_e * self.opt.w_gamma
+                   0.5 * (self.err_d_fake + \
+                          self.err_d_fake_e * self.opt.w_gamma)
       if self.err_d > 0.15:
         self.err_d.backward(retain_graph=True)
 

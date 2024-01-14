@@ -26,6 +26,32 @@ import torch.nn.init as init
 
 Activation = nn.LeakyReLU #nn.ReLU #  nn.Sigmoid
 
+#--- resnet impl here is based on https://blog.paperspace.com/writing-resnet-from-scratch-in-pytorch/
+class ResidualBlock(nn.Module):
+    def __init__(self, opt, stride = 1, downsample = None):
+        super().__init__()
+        in_channels, out_channels = opt.z_dim, opt.hidden_dim
+        self.conv1 = nn.Sequential(
+                        nn.Conv1d(in_channels, out_channels, kernel_size = 3, stride = stride, padding = 1),
+                        nn.BatchNorm1d(out_channels),
+                        nn.ReLU())
+        self.conv2 = nn.Sequential(
+                        nn.Conv1d(out_channels, out_channels, kernel_size = 3, stride = 1, padding = 1),
+                        nn.BatchNorm1d(out_channels))
+        self.downsample = downsample
+        self.relu = nn.ReLU()
+        self.out_channels = out_channels
+        
+    def forward(self, x):
+        residual = x
+        out = self.conv1(x)
+        out = self.conv2(out)
+        if self.downsample:
+            residual = self.downsample(x)
+        out += residual
+        out = self.relu(out)
+        return out
+
 def _RNN(opt):
     if opt.module == 'gru':
         return nn.GRU
@@ -128,7 +154,7 @@ class Generator(nn.Module):
         rnn_inp_dim = opt.latent_dim + (opt.embedding_dim + 2) * history_len_samples
         
         _rnn = _RNN(opt)
-        self.rnn = _rnn(input_size = rnn_inp_dim, hidden_size = opt.hidden_dim, num_layers = opt.num_layer, batch_first = True)
+        self.rnn = _rnn(input_size = rnn_inp_dim, hidden_size = opt.hidden_dim, num_layers = opt.num_layer_gen, batch_first = True)
      #   self.norm = nn.LayerNorm(opt.hidden_dim)
         self.fc = nn.Linear(opt.hidden_dim, opt.hidden_dim)
         self.sigmoid = Activation() #n.Sigmoid()
@@ -191,7 +217,7 @@ class Discriminator(nn.Module):
         rnn_inp_dim = opt.hidden_dim + (opt.embedding_dim + 2) * history_len_samples
         
         _rnn = _RNN(opt)
-        self.rnn = _rnn(input_size = rnn_inp_dim, hidden_size = opt.hidden_dim, num_layers = opt.num_layer, batch_first = True, dropout = 0.)
+        self.rnn = _rnn(input_size = rnn_inp_dim, hidden_size = opt.hidden_dim, num_layers = opt.num_layer_discrim, batch_first = True, dropout = 0.)
       #  self.norm = nn.LayerNorm(opt.hidden_dim)
         fc_out_dim = 1 #opt.hidden_dim # 1 # that's the original impl, but makes sense to set to 1 (binary classification)
         self.fc = nn.Linear(opt.hidden_dim, fc_out_dim)

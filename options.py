@@ -69,6 +69,16 @@ class Options():
             default=3,
             type=int)
         self.parser.add_argument(
+            '--num_layer_gen',
+            help='number of generator layers (should be optimized)',
+            default=3,
+            type=int)
+        self.parser.add_argument(
+            '--num_layer_discrim',
+            help='number of discriminator layers (should be optimized)',
+            default=3,
+            type=int)
+        self.parser.add_argument(
             '--iteration',
             help='Training iterations (should be optimized)',
             default=50000,
@@ -110,6 +120,8 @@ class Options():
         self.parser.add_argument('--lr', type=float, default=0.001, help='initial learning rate for adam')
 
         self.parser.add_argument('--w_gamma', type=float, default=1, help='Gamma weight')
+        self.parser.add_argument('--w_smooth', type=float, default=50, help='Smoothness loss weight')
+        self.parser.add_argument('--w_l1', type=float, default=100, help='L1 loss weight')
         self.parser.add_argument('--w_es', type=float, default=0.1, help='Encoder loss weight')
         self.parser.add_argument('--w_e0', type=float, default=10, help='Encoder loss weight')
         self.parser.add_argument('--w_g', type=float, default=100, help='Generator loss weight.')
