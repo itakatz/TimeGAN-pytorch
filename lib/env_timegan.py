@@ -525,17 +525,23 @@ class EnvelopeTimeGAN(BaseModel):
       self.netg = Generator(self.opt, self.net_note_embed).to(self.device)
       self.netd = Discriminator(self.opt, self.net_note_embed).to(self.device)
       self.nets = Supervisor(self.opt).to(self.device)
+      
+      #--- set var "map_location" in case we load on CPU
+      if not torch.cuda.is_available():
+          map_location = torch.device('cpu')
+      else:
+          map_location = None
 
       if self.opt.resume != '':
         epoch_str = f'_epoch{opt.resume_epoch}' if 'resume_epoch' in opt else ''
-        print("\nLoading pre-trained networks.")
-        self.opt.iter = torch.load(os.path.join(self.opt.resume, f'netG{epoch_str}.pth'))['epoch']
-        self.net_note_embed.load_state_dict(torch.load(os.path.join(self.opt.resume, f'netNE{epoch_str}.pth'))['state_dict'])
-        self.nete.load_state_dict(torch.load(os.path.join(self.opt.resume, f'netE{epoch_str}.pth'))['state_dict'])
-        self.netr.load_state_dict(torch.load(os.path.join(self.opt.resume, f'netR{epoch_str}.pth'))['state_dict'])
-        self.netg.load_state_dict(torch.load(os.path.join(self.opt.resume, f'netG{epoch_str}.pth'))['state_dict'])
-        self.netd.load_state_dict(torch.load(os.path.join(self.opt.resume, f'netD{epoch_str}.pth'))['state_dict'])
-        self.nets.load_state_dict(torch.load(os.path.join(self.opt.resume, f'netS{epoch_str}.pth'))['state_dict'])
+        print("\nLoading pre-trained networks (epoch suffix: '{epoch_str}').")
+        self.opt.iter = torch.load(os.path.join(self.opt.resume, f'netG{epoch_str}.pth'), map_location)['epoch']
+        self.net_note_embed.load_state_dict(torch.load(os.path.join(self.opt.resume, f'netNE{epoch_str}.pth'), map_location)['state_dict'])
+        self.nete.load_state_dict(torch.load(os.path.join(self.opt.resume, f'netE{epoch_str}.pth'), map_location)['state_dict'])
+        self.netr.load_state_dict(torch.load(os.path.join(self.opt.resume, f'netR{epoch_str}.pth'), map_location)['state_dict'])
+        self.netg.load_state_dict(torch.load(os.path.join(self.opt.resume, f'netG{epoch_str}.pth'), map_location)['state_dict'])
+        self.netd.load_state_dict(torch.load(os.path.join(self.opt.resume, f'netD{epoch_str}.pth'), map_location)['state_dict'])
+        self.nets.load_state_dict(torch.load(os.path.join(self.opt.resume, f'netS{epoch_str}.pth'), map_location)['state_dict'])
         print("\tDone.\n")
 
       # loss
@@ -557,9 +563,15 @@ class EnvelopeTimeGAN(BaseModel):
         self.optimizer_s = optim.Adam(self.nets.parameters(), lr=self.opt.lr, betas=(self.opt.beta1, 0.999))
 
     def load_AE_and_S(self, checkpoint_folder, epoch):
-        self.nete.load_state_dict(torch.load(os.path.join(checkpoint_folder, f'netE_epoch{epoch}.pth'))['state_dict'])
-        self.netr.load_state_dict(torch.load(os.path.join(checkpoint_folder, f'netR_epoch{epoch}.pth'))['state_dict'])
-        self.nets.load_state_dict(torch.load(os.path.join(checkpoint_folder, f'netS_epoch{epoch}.pth'))['state_dict'])
+          #--- set var "map_location" in case we load on CPU
+        if not torch.cuda.is_available():
+            map_location = torch.device('cpu')
+        else:
+            map_location = None
+
+        self.nete.load_state_dict(torch.load(os.path.join(checkpoint_folder, f'netE_epoch{epoch}.pth'), map_location)['state_dict'])
+        self.netr.load_state_dict(torch.load(os.path.join(checkpoint_folder, f'netR_epoch{epoch}.pth'), map_location)['state_dict'])
+        self.nets.load_state_dict(torch.load(os.path.join(checkpoint_folder, f'netS_epoch{epoch}.pth'), map_location)['state_dict'])
         if self.opt.isTrain:
           self.nete.train()
           self.netr.train()
@@ -674,13 +686,26 @@ class EnvelopeTimeGAN(BaseModel):
       #--- plotting some figs of real and generated envs
       if False:
           #m = self
-          loss_info = pd.Series([l.item() for l in [m.err_g_U, m.err_g_U_e * m.opt.w_gamma, m.err_g_V1 * m.opt.w_g,m.err_g_V2 * m.opt.w_g, torch.sqrt(m.err_s), m.err_smoothness*m.opt.w_g, m.err_l1*m.opt.w_l1]], index=['fake d loss','fake_e d loss','V1 (std loss)', 'V2 (mean loss)','s loss','smooth loss', 'L1_loss'])
           gen=iter(train_loader)
           batch=next(gen)
           xin,xout,xlen, note_id,note_en,is_note = batch
-          model.train_one_iter_g(xin, xout,xlen,note_id,note_en,is_note)
+          #--- to save and load generator state before/after calling "train_one_iter_g":
+          #     >> g_sd = model.netg.state_dict()
+          #     >> model.netg.load_state_dict(g_sd)
+          m = model #--- assuming we are not in debug mode, and have a loaded model 
+          m.train_one_iter_g(xin, xout,xlen,note_id,note_en,is_note)
+
+          #--- to "train" on a single sequence:
+          # k=0
+          # model.train_one_iter_g(xin[k:k+1], xout[k:k+1], xlen[k:k+1], note_id[k:k+1], note_en[k:k+1], is_note[k:k+1])
+          
+          loss_info = pd.Series([l.item() for l in [m.err_g_U, m.err_g_U_e * m.opt.w_gamma, m.err_g_V1 * m.opt.w_g,m.err_g_V2 * m.opt.w_g, torch.sqrt(m.err_s), m.err_smoothness*m.opt.w_smooth, m.err_l1*m.opt.w_l1]], index=['fake d loss','fake_e d loss','V1 (std loss)', 'V2 (mean loss)','s loss','smooth loss', 'L1_loss'])
           #model.train_one_iter_g(xin, xout,xlen,note_id,note_en,is_note)
-          xhat,xgt=[x_.detach().cpu().numpy() for x_ in [self.X_hat,self.X_out]]
+          
+          #--- undo the conversion to db scale + the conversion to [0, 1] range
+          unit_convert = lambda e: 10 ** (((e - 1) * 50) / 10) - 1e-5
+          
+          xhat,xgt=[unit_convert(x_.detach().cpu().numpy()) for x_ in [m.X_hat, m.X_out]]
           plt.close('all')
           fig,ax=plt.subplots(4,4)
           fig.set_size_inches((18,12))

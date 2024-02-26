@@ -9,6 +9,7 @@ Returns:
 import argparse
 import os
 import torch
+import pickle
 
 
 class Options():
@@ -167,4 +168,7 @@ class Options():
             for k, v in sorted(args.items()):
                 opt_file.write('%s: %s\n' % (str(k), str(v)))
             opt_file.write('-------------- End ----------------\n')
+        file_name_p = file_name.replace('.txt', '.pickle')
+        pickle.dump(self.opt, open(file_name_p, 'wb'))
+
         return self.opt
