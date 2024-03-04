@@ -126,6 +126,7 @@ class Options():
         self.parser.add_argument('--w_es', type=float, default=0.1, help='Encoder loss weight')
         self.parser.add_argument('--w_e0', type=float, default=10, help='Encoder loss weight')
         self.parser.add_argument('--w_g', type=float, default=100, help='Generator loss weight.')
+        self.parser.add_argument('--calc_z_grad', action = 'store_true', help='calculate the gradient of the generator loss with respect to random input Z, for monitoring mode collapse')
         self.isTrain = True
         self.opt = None
 

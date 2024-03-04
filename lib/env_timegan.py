@@ -377,6 +377,7 @@ class BaseModel():
         running_loss_g = 0.0
         running_loss_er_ = 0.0
         running_loss_d = 0.0
+        running_z_grad_norm = 0.0
         for batch in self.train_dataloader: # range(self.opt.iteration):
           seq, seq_out, seq_len, note_ids, note_en, is_note = batch
     
@@ -390,6 +391,10 @@ class BaseModel():
           running_loss_g += self.err_g.item()
           running_loss_er_ += self.err_er_.item()
           running_loss_d += self.err_d.item()
+          #--- optionally calc the gradient of the generator loss wrt the generated Z input
+          if self.opt.calc_z_grad:
+            z_grad_norm = self.Z.grad.data.norm().item()
+            running_z_grad_norm += z_grad_norm
 
         #--- eval discriminator accuracy TODO add to tensorboard writer
         acc_real, acc_fake, acc_fake_e = self.evaluate_d()
@@ -397,13 +402,17 @@ class BaseModel():
         running_loss_g /= len(self.train_dataloader)
         running_loss_er_ /= len(self.train_dataloader)
         running_loss_d /= len(self.train_dataloader)
+        running_z_grad_norm /= len(self.train_dataloader)
+
         self.writer.add_scalar('Joint Loss/ g train', running_loss_g, epoch)
         self.writer.add_scalar('Joint Loss/ er_ train', running_loss_er_, epoch)
         self.writer.add_scalar('Joint Loss/ d train', running_loss_d, epoch)
-            
+
         #--- plot generated samples
         num_to_generate = 8
         generated_samples, conditioned_env, _, _ = self.generation(num_to_generate)
+        
+
         k = 0 # which channel to plot (the auto-encoder decodes all channels - TODO consider just decode 1 channel??)
         for ifig in range(num_to_generate):
             fig, ax = plt.subplots()
@@ -414,7 +423,10 @@ class BaseModel():
             self.writer.add_figure(f'Generator/{ifig}', fig, epoch)
 
         self.writer.flush()
-        print(f'Joint training epoch: {epoch}/{self.opt.num_epochs} loss gen: {running_loss_g:.5f} disc: {running_loss_d:.5f} disc acc real/fake/fake_e: {acc_real:.3f}/{acc_fake:.3f}/{acc_fake_e:.3f}')
+        info_str = f'Joint training epoch: {epoch}/{self.opt.num_epochs} loss gen: {running_loss_g:.5f} disc: {running_loss_d:.5f} disc acc real/fake/fake_e: {acc_real:.3f}/{acc_fake:.3f}/{acc_fake_e:.3f}'
+        if self.opt.calc_z_grad:
+            info_str += f' z_grad_norm: {running_z_grad_norm:.3f}'
+        print(info_str)
         if epoch % 10 == 0:
             print(f'epoch {epoch}, saving models')
             self.save_weights(epoch)
@@ -466,10 +478,10 @@ class BaseModel():
     seq_out, _, note_ids, note_en, is_note = self.get_validation_examples(n_samples = num_samples, decode = False)
     T = [self.max_seq_len] * num_samples
     self.Z = random_generator(num_samples, self.opt.latent_dim, T, self.max_seq_len, uni_min, uni_max) #mean, std)
-    self.Z = torch.tensor(self.Z, dtype=torch.float32).to(self.device)
+    self.Z = torch.tensor(self.Z, dtype = torch.float32, device = self.device, requires_grad = self.opt.calc_z_grad)
     
     note_ids = torch.tensor(note_ids, dtype = torch.int).to(self.device)
-    note_en = torch.tensor(note_en, dtype = torch.int).to(self.device)
+    note_en = torch.tensor(note_en, dtype = torch.float32).to(self.device)
     is_note = torch.tensor(is_note, dtype = torch.int).to(self.device)
     
     self.netg.eval()
@@ -534,7 +546,7 @@ class EnvelopeTimeGAN(BaseModel):
 
       if self.opt.resume != '':
         epoch_str = f'_epoch{opt.resume_epoch}' if 'resume_epoch' in opt else ''
-        print("\nLoading pre-trained networks (epoch suffix: '{epoch_str}').")
+        print(f"\nLoading pre-trained networks (epoch suffix: '{epoch_str}').")
         self.opt.iter = torch.load(os.path.join(self.opt.resume, f'netG{epoch_str}.pth'), map_location)['epoch']
         self.net_note_embed.load_state_dict(torch.load(os.path.join(self.opt.resume, f'netNE{epoch_str}.pth'), map_location)['state_dict'])
         self.nete.load_state_dict(torch.load(os.path.join(self.opt.resume, f'netE{epoch_str}.pth'), map_location)['state_dict'])
@@ -592,7 +604,9 @@ class EnvelopeTimeGAN(BaseModel):
     def forward_g(self):
       """ Forward propagate through netG
       """
-      self.Z = torch.tensor(self.Z, dtype=torch.float32).to(self.device)
+      if type(self.Z) is not torch.Tensor:
+          self.Z = torch.tensor(self.Z, device = self.device, dtype = torch.float32, requires_grad = self.opt.calc_z_grad)
+
       self.E_hat = self.netg(self.Z, self.note_ids, self.note_en, self.is_note)
     
     def forward_dg(self):
@@ -706,6 +720,7 @@ class EnvelopeTimeGAN(BaseModel):
           unit_convert = lambda e: 10 ** (((e - 1) * 50) / 10) - 1e-5
           
           xhat,xgt=[unit_convert(x_.detach().cpu().numpy()) for x_ in [m.X_hat, m.X_out]]
+          import matplotlib.pyplot as plt
           plt.close('all')
           fig,ax=plt.subplots(4,4)
           fig.set_size_inches((18,12))
