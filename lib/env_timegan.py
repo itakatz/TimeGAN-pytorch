@@ -387,12 +387,8 @@ class BaseModel():
             self.train_one_iter_g(seq, seq_out, seq_len, note_ids, note_en, is_note)
             self.train_one_iter_er_(seq, seq_out, seq_len)
 
-          self.train_one_iter_d(seq, seq_len, note_ids, note_en, is_note)
-          
-          running_loss_g += self.err_g.item()
-          running_loss_er_ += self.err_er_.item()
-          running_loss_d += self.err_d.item()
           #--- optionally calc the gradient of the generator loss wrt the generated Z input
+          #--- do this before "train_one_iter_d" because when the discriminator loss is small enough, "backward_d" is not called, so Z.grad will be None
           if self.opt.calc_z_grad:
             if self.Z.grad is None:
               num_grad_skipped += 1
@@ -400,6 +396,12 @@ class BaseModel():
             else:
               z_grad_norm = self.Z.grad.data.norm().item()
               running_z_grad_norm += z_grad_norm
+          
+          self.train_one_iter_d(seq, seq_len, note_ids, note_en, is_note)
+          
+          running_loss_g += self.err_g.item()
+          running_loss_er_ += self.err_er_.item()
+          running_loss_d += self.err_d.item()
 
         #--- eval discriminator accuracy TODO add to tensorboard writer
         acc_real, acc_fake, acc_fake_e = self.evaluate_d()
