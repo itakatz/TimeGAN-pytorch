@@ -378,7 +378,8 @@ class BaseModel():
         running_loss_er_ = 0.0
         running_loss_d = 0.0
         running_z_grad_norm = 0.0
-        for batch in self.train_dataloader: # range(self.opt.iteration):
+        num_grad_skipped = 0
+        for ibatch, batch in enumerate(self.train_dataloader): # range(self.opt.iteration):
           seq, seq_out, seq_len, note_ids, note_en, is_note = batch
     
           # Train for one iter
@@ -393,8 +394,12 @@ class BaseModel():
           running_loss_d += self.err_d.item()
           #--- optionally calc the gradient of the generator loss wrt the generated Z input
           if self.opt.calc_z_grad:
-            z_grad_norm = self.Z.grad.data.norm().item()
-            running_z_grad_norm += z_grad_norm
+            if self.Z.grad is None:
+              num_grad_skipped += 1
+              print(f'[batch {ibatch}] grad of latent vector Z is None, not accumulating this batch')
+            else:
+              z_grad_norm = self.Z.grad.data.norm().item()
+              running_z_grad_norm += z_grad_norm
 
         #--- eval discriminator accuracy TODO add to tensorboard writer
         acc_real, acc_fake, acc_fake_e = self.evaluate_d()
@@ -402,7 +407,7 @@ class BaseModel():
         running_loss_g /= len(self.train_dataloader)
         running_loss_er_ /= len(self.train_dataloader)
         running_loss_d /= len(self.train_dataloader)
-        running_z_grad_norm /= len(self.train_dataloader)
+        running_z_grad_norm /= (len(self.train_dataloader) - num_grad_skipped)
 
         self.writer.add_scalar('Joint Loss/ g train', running_loss_g, epoch)
         self.writer.add_scalar('Joint Loss/ er_ train', running_loss_er_, epoch)
