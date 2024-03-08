@@ -373,7 +373,9 @@ class BaseModel():
             self.writer.flush()
             print(f'Supervisor training epoch: {epoch}/{self.opt.num_epochs_es} training loss {train_loss:.5f}, validation loss {val_loss_s:.5f} (embedder loss {val_loss_e:.5f})')
     
-    for epoch in range(self.opt.num_epochs):
+    start_epoch = 0 if 'iter' not in self.opt else self.opt.iter
+
+    for epoch in range(start_epoch, start_epoch + self.opt.num_epochs):
         running_loss_g = 0.0
         running_loss_er_ = 0.0
         running_loss_d = 0.0
