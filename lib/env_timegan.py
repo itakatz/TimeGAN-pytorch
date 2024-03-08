@@ -412,7 +412,6 @@ class BaseModel():
         num_to_generate = 8
         generated_samples, conditioned_env, _, _ = self.generation(num_to_generate)
         
-
         k = 0 # which channel to plot (the auto-encoder decodes all channels - TODO consider just decode 1 channel??)
         for ifig in range(num_to_generate):
             fig, ax = plt.subplots()
@@ -425,7 +424,7 @@ class BaseModel():
         self.writer.flush()
         info_str = f'Joint training epoch: {epoch}/{self.opt.num_epochs} loss gen: {running_loss_g:.5f} disc: {running_loss_d:.5f} disc acc real/fake/fake_e: {acc_real:.3f}/{acc_fake:.3f}/{acc_fake_e:.3f}'
         if self.opt.calc_z_grad:
-            info_str += f' z_grad_norm: {running_z_grad_norm:.3f}'
+            info_str += f' z_grad_norm: {running_z_grad_norm:.3g}'
         print(info_str)
         if epoch % 10 == 0:
             print(f'epoch {epoch}, saving models')
@@ -470,14 +469,26 @@ class BaseModel():
 
   #def generation(self, num_samples, mean = 0.0, std = 1.0): #--- see commnet in random_generator method (itamar katz)
   #--- TODO enable passing random seed to give to get_validation_examples (but, for full reproducability,  we also need to control the sampling of segment from each example, which happens in the __getitem__ method of the dataset)
-  def generation(self, num_samples, uni_min = 0.0, uni_max = 1.0):
+  def generation(self, num_samples, validation_data = None, uni_min = 0.0, uni_max = 1.0, seed = 42):
+    ''' If validation_data is not None, it should be a tuple of variables as returned from "self.get_validation_examples"
+        This allows for generating a whole phrase at inference time
+    '''
+
     if num_samples == 0:
       return None, None
     ## Synthetic data generation
     #self.X0, self.T = batch_generator(self.ori_data, self.ori_time, self.opt.batch_size)
-    seq_out, _, note_ids, note_en, is_note = self.get_validation_examples(n_samples = num_samples, decode = False)
-    T = [self.max_seq_len] * num_samples
-    self.Z = random_generator(num_samples, self.opt.latent_dim, T, self.max_seq_len, uni_min, uni_max) #mean, std)
+    if validation_data is None:
+        seq_out, _, note_ids, note_en, is_note = self.get_validation_examples(n_samples = num_samples, seed = seed, decode = False)
+        T = [self.max_seq_len] * num_samples
+        seq_len = self.max_seq_len
+    else:
+        seq_out, note_ids, note_en, is_note = validation_data
+        seq_len = seq_out.shape[1]
+        T = [seq_len]
+        num_samples = 1
+
+    self.Z = random_generator(num_samples, self.opt.latent_dim, T, seq_len, uni_min, uni_max) #mean, std)
     self.Z = torch.tensor(self.Z, dtype = torch.float32, device = self.device, requires_grad = self.opt.calc_z_grad)
     
     note_ids = torch.tensor(note_ids, dtype = torch.int).to(self.device)
