@@ -493,7 +493,7 @@ class BaseModel():
         seq_len = self.max_seq_len
     else:
         seq_out, note_ids, note_en, is_note = validation_data
-        seq_len = seq_out.shape[1]
+        seq_len = note_ids.shape[1] # This can be None: seq_out.shape[1]
         T = [seq_len]
         num_samples = 1
 
